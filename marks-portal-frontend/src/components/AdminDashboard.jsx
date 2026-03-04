@@ -1,14 +1,14 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
-import { getAllStudents, deleteMark, registerStudent } from '../services/api';
+import { getAllStudents, deleteMark, registerStudent, registerBulkStudents, forgotPassword } from '../services/api';
 import MarksTable from './MarksTable';
 import MarkModal from './MarkModal';
 import CSVUpload from './CSVUpload';
 import ChangePasswordModal from './ChangePasswordModal';
 
-const TABS = ['All Students', 'Add / Edit Mark', 'Upload CSV', 'Register Student'];
+const TABS = ['All Students', 'Add / Edit Mark', 'Upload CSV', 'Register Student', 'Bulk Register', 'Reset Password'];
 
 export default function AdminDashboard() {
     const { user, logout } = useAuth();
@@ -27,6 +27,17 @@ export default function AdminDashboard() {
     const [regForm, setRegForm] = useState({ roll_number: '', name: '', email: '' });
     const [regLoading, setRegLoading] = useState(false);
     const [generatedCreds, setGeneratedCreds] = useState(null);
+
+    // Bulk register state
+    const [bulkText, setBulkText] = useState('');
+    const [bulkLoading, setBulkLoading] = useState(false);
+    const [bulkResult, setBulkResult] = useState(null);
+    const bulkFileRef = useRef();
+
+    // Reset password state
+    const [resetRoll, setResetRoll] = useState('');
+    const [resetLoading, setResetLoading] = useState(false);
+    const [resetCreds, setResetCreds] = useState(null);
 
     const fetchAll = useCallback(() => {
         setLoading(true);
@@ -295,6 +306,131 @@ export default function AdminDashboard() {
                                         <span className="text-sm font-mono text-green-300">{generatedCreds.password}</span>
                                     </div>
                                 </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Tab: Bulk Register Students */}
+                {tab === 4 && (
+                    <div className="card max-w-3xl space-y-5">
+                        <div>
+                            <h3 className="text-lg font-semibold text-white">Bulk Register Students</h3>
+                            <p className="text-xs text-slate-500 mt-1">Paste CSV data below or upload a file. Format: <span className="font-mono text-indigo-300">roll_number,name,email(optional)</span></p>
+                        </div>
+                        <button
+                            onClick={() => {
+                                const blob = new Blob(['roll_number,name,email\nCS2024001,Ahmed Ali,ahmed@example.com\nCS2024002,Sara Khan,\n'], { type: 'text/csv' });
+                                const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'students_template.csv'; a.click();
+                            }}
+                            className="btn-secondary flex items-center gap-2 text-xs w-fit"
+                        >
+                            ⬇ Download Template CSV
+                        </button>
+                        <input ref={bulkFileRef} type="file" accept=".csv" className="hidden" onChange={(e) => {
+                            const file = e.target.files[0]; if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = (ev) => setBulkText(ev.target.result);
+                            reader.readAsText(file); e.target.value = '';
+                        }} />
+                        <button onClick={() => bulkFileRef.current.click()} className="btn-secondary text-xs">📂 Load from CSV file</button>
+                        <textarea
+                            className="input-field font-mono text-xs min-h-[160px] resize-y"
+                            placeholder={"roll_number,name,email\nCS2024001,Ahmed Ali,ahmed@example.com\nCS2024002,Sara Khan,"}
+                            value={bulkText}
+                            onChange={(e) => { setBulkText(e.target.value); setBulkResult(null); }}
+                        />
+                        <button
+                            disabled={!bulkText.trim() || bulkLoading}
+                            className="btn-primary w-full"
+                            onClick={async () => {
+                                setBulkLoading(true); setBulkResult(null);
+                                try {
+                                    const lines = bulkText.trim().split('\n').filter(Boolean);
+                                    const dataLines = lines[0].toLowerCase().startsWith('roll_number') ? lines.slice(1) : lines;
+                                    const students = dataLines.map(line => {
+                                        const [roll_number, name, email] = line.split(',').map(s => s?.trim());
+                                        return { roll_number, name, email: email || undefined };
+                                    });
+                                    const res = await registerBulkStudents(students);
+                                    setBulkResult(res.data); toast.success(res.data.message); fetchAll();
+                                } catch (err) {
+                                    toast.error(err.response?.data?.message || 'Bulk registration failed.');
+                                } finally { setBulkLoading(false); }
+                            }}
+                        >{bulkLoading ? 'Registering...' : 'Register All Students'}</button>
+
+                        {bulkResult && (
+                            <div className="space-y-4">
+                                <div className="flex gap-3">
+                                    <span className="badge-success">✓ {bulkResult.credentials.length} registered</span>
+                                    {bulkResult.errors?.length > 0 && <span className="badge-danger">✗ {bulkResult.errors.length} failed</span>}
+                                </div>
+                                {bulkResult.credentials.length > 0 && (
+                                    <div>
+                                        <p className="text-xs text-slate-400 mb-2 font-semibold uppercase tracking-wide">Generated Credentials</p>
+                                        <div className="overflow-x-auto rounded-xl border border-white/8">
+                                            <table className="w-full text-xs">
+                                                <thead><tr style={{ background: 'rgba(255,255,255,0.04)' }}>
+                                                    {['Roll Number', 'Name', 'Password'].map(h => <th key={h} className="text-left px-4 py-3 text-slate-400 uppercase tracking-wide font-semibold">{h}</th>)}
+                                                </tr></thead>
+                                                <tbody>{bulkResult.credentials.map((c, i) => (
+                                                    <tr key={i} className="border-t border-white/5">
+                                                        <td className="px-4 py-2 font-mono text-indigo-300">{c.roll_number}</td>
+                                                        <td className="px-4 py-2 text-slate-200">{c.name}</td>
+                                                        <td className="px-4 py-2 font-mono text-green-300">{c.password}</td>
+                                                    </tr>
+                                                ))}</tbody>
+                                            </table>
+                                        </div>
+                                        <button className="btn-secondary text-xs mt-3" onClick={() => {
+                                            const csv = 'Roll Number,Name,Password\n' + bulkResult.credentials.map(c => `${c.roll_number},${c.name},${c.password}`).join('\n');
+                                            const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+                                            a.download = 'registered_credentials.csv'; a.click();
+                                        }}>⬇ Download Credentials CSV</button>
+                                    </div>
+                                )}
+                                {bulkResult.errors?.length > 0 && bulkResult.errors.map((e, i) => (
+                                    <p key={i} className="text-xs text-red-400">{e.roll_number}: {e.error}</p>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* Tab: Reset Student Password */}
+                {tab === 5 && (
+                    <div className="card max-w-lg space-y-5">
+                        <div>
+                            <h3 className="text-lg font-semibold text-white">Reset Student Password</h3>
+                            <p className="text-xs text-slate-500 mt-1">Generate a new password for a student and share it directly.</p>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-slate-400 mb-1.5 uppercase tracking-wide">Student Roll Number</label>
+                            <input className="input-field" placeholder="e.g. CS2024001" value={resetRoll}
+                                onChange={(e) => { setResetRoll(e.target.value); setResetCreds(null); }} />
+                        </div>
+                        <button disabled={!resetRoll.trim() || resetLoading} className="btn-primary w-full"
+                            onClick={async () => {
+                                setResetLoading(true); setResetCreds(null);
+                                try {
+                                    const res = await forgotPassword(resetRoll.trim());
+                                    setResetCreds(res.data.credentials); toast.success('Password reset!'); setResetRoll('');
+                                } catch (err) {
+                                    toast.error(err.response?.data?.message || 'Reset failed.');
+                                } finally { setResetLoading(false); }
+                            }}
+                        >{resetLoading ? 'Resetting...' : 'Reset Password'}</button>
+
+                        {resetCreds && (
+                            <div className="p-4 rounded-xl space-y-3" style={{ background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.3)' }}>
+                                <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide">✓ New Credentials — share with student</p>
+                                {[['Name', resetCreds.name, 'text-white'], ['Roll Number', resetCreds.roll_number, 'text-indigo-300 font-mono'], ['New Password', resetCreds.password, 'text-green-300 font-mono']].map(([label, val, cls]) => (
+                                    <div key={label} className="flex justify-between items-center">
+                                        <span className="text-xs text-slate-500">{label}</span>
+                                        <span className={`text-sm ${cls}`}>{val}</span>
+                                    </div>
+                                ))}
                             </div>
                         )}
                     </div>

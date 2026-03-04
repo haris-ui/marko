@@ -4,8 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
 const pool = require('../db');
-const { verifyToken } = require('../middleware/auth');
-const { sendCredentialsEmail } = require('../emailService');
+const { verifyToken, requireAdmin } = require('../middleware/auth');
 
 /**
  * Generate a random alphanumeric password of given length.
@@ -78,23 +77,19 @@ router.post(
 
 /**
  * POST /api/auth/register
- * Admin only — registers a new student and returns generated credentials.
+ * Admin only — registers a single student and returns generated credentials.
  * Body: { roll_number, name, email? }
  */
 router.post(
     '/register',
     verifyToken,
+    requireAdmin,
     [
         body('roll_number').trim().notEmpty().withMessage('Roll number is required.'),
         body('name').trim().notEmpty().withMessage('Name is required.'),
         body('email').optional({ nullable: true }).isEmail().withMessage('Invalid email.'),
     ],
     async (req, res, next) => {
-        // Only admins can register students
-        if (req.user.role !== 'admin') {
-            return res.status(403).json({ message: 'Admin access required.' });
-        }
-
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
             return res.status(400).json({ message: errors.array()[0].msg });
@@ -103,7 +98,6 @@ router.post(
         const { roll_number, name, email } = req.body;
 
         try {
-            // Check duplicate
             const [existing] = await pool.execute(
                 'SELECT id FROM students WHERE roll_number = ?',
                 [roll_number]
@@ -120,23 +114,9 @@ router.post(
                 [roll_number, password_hash, name, email || null, 'student']
             );
 
-            // Send email if provided
-            if (email) {
-                try {
-                    await sendCredentialsEmail(email, name, roll_number, plainPassword);
-                } catch (emailErr) {
-                    console.error('[Register] Email sending failed:', emailErr.message);
-                    // We don't fail the registration if email fails, but we inform the admin
-                }
-            }
-
             res.status(201).json({
                 message: 'Student registered successfully.',
-                credentials: {
-                    roll_number,
-                    password: plainPassword,
-                    name,
-                },
+                credentials: { roll_number, password: plainPassword, name },
             });
         } catch (err) {
             next(err);
@@ -145,15 +125,70 @@ router.post(
 );
 
 /**
+ * POST /api/auth/register-bulk
+ * Admin only — registers multiple students from JSON array.
+ * Body: { students: [{ roll_number, name, email? }] }
+ * Returns: array of generated credentials.
+ */
+router.post(
+    '/register-bulk',
+    verifyToken,
+    requireAdmin,
+    async (req, res, next) => {
+        const { students } = req.body;
+        if (!Array.isArray(students) || students.length === 0) {
+            return res.status(400).json({ message: 'students array is required.' });
+        }
+
+        const results = [];
+        const errors = [];
+
+        for (const s of students) {
+            const { roll_number, name, email } = s;
+            if (!roll_number?.trim() || !name?.trim()) {
+                errors.push({ roll_number, error: 'Missing roll_number or name.' });
+                continue;
+            }
+            try {
+                const [existing] = await pool.execute(
+                    'SELECT id FROM students WHERE roll_number = ?',
+                    [roll_number.trim()]
+                );
+                if (existing.length > 0) {
+                    errors.push({ roll_number, error: 'Already exists.' });
+                    continue;
+                }
+                const plainPassword = generatePassword(8);
+                const password_hash = await bcrypt.hash(plainPassword, 12);
+                await pool.execute(
+                    'INSERT INTO students (roll_number, password_hash, name, email, role) VALUES (?, ?, ?, ?, ?)',
+                    [roll_number.trim(), password_hash, name.trim(), email?.trim() || null, 'student']
+                );
+                results.push({ roll_number: roll_number.trim(), name: name.trim(), password: plainPassword });
+            } catch (err) {
+                errors.push({ roll_number, error: err.message });
+            }
+        }
+
+        res.json({
+            message: `Registered ${results.length} students. ${errors.length} failed.`,
+            credentials: results,
+            errors,
+        });
+    }
+);
+
+/**
  * POST /api/auth/forgot-password
- * Public — resets password and sends new one via email.
+ * Admin only — resets a student's password and returns the new one.
  * Body: { roll_number }
+ * NOTE: No email service needed — admin gives credentials to student directly.
  */
 router.post(
     '/forgot-password',
-    [
-        body('roll_number').trim().notEmpty().withMessage('Roll number is required.'),
-    ],
+    verifyToken,
+    requireAdmin,
+    [body('roll_number').trim().notEmpty().withMessage('Roll number is required.')],
     async (req, res, next) => {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
@@ -164,32 +199,24 @@ router.post(
 
         try {
             const [rows] = await pool.execute(
-                'SELECT * FROM students WHERE roll_number = ?',
+                'SELECT id, name FROM students WHERE roll_number = ?',
                 [roll_number]
             );
-
             if (rows.length === 0) {
-                return res.status(404).json({ message: 'Student with this roll number not found.' });
-            }
-
-            const student = rows[0];
-            if (!student.email) {
-                return res.status(400).json({
-                    message: 'No email address registered for this student. Please contact the administrator.'
-                });
+                return res.status(404).json({ message: 'Student not found.' });
             }
 
             const plainPassword = generatePassword(8);
             const password_hash = await bcrypt.hash(plainPassword, 12);
-
             await pool.execute(
                 'UPDATE students SET password_hash = ? WHERE id = ?',
-                [password_hash, student.id]
+                [password_hash, rows[0].id]
             );
 
-            await sendCredentialsEmail(student.email, student.name, student.roll_number, plainPassword);
-
-            res.json({ message: 'A new password has been sent to your registered email address.' });
+            res.json({
+                message: 'Password reset successfully. Share these new credentials with the student.',
+                credentials: { roll_number, name: rows[0].name, password: plainPassword },
+            });
         } catch (err) {
             next(err);
         }

@@ -34,6 +34,8 @@ export const forgotPassword = (roll_number) =>
 
 export const registerStudent = (data) => api.post('/auth/register', data);
 
+export const registerBulkStudents = (students) => api.post('/auth/register-bulk', { students });
+
 export const changePassword = (current_password, new_password) =>
     api.post('/auth/change-password', { current_password, new_password });
 
