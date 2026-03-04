@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-    baseURL: 'https://marko-nine.vercel.app/',
+    baseURL: 'https://marko-nine.vercel.app/api',
     timeout: 15000,
 });
 

@@ -94,8 +94,8 @@ async function initDB() {
   `);
 }
 
-app.listen(PORT, async () => {
-    console.log(`[Server] Running on http://localhost:${PORT}`);
+// ─── Initialize DB immediately (works on both local and Vercel serverless) ────
+(async () => {
     try {
         await initDB();
         console.log('[DB] Tables initialized.');
@@ -103,4 +103,13 @@ app.listen(PORT, async () => {
     } catch (err) {
         console.error('[DB] Initialization error:', err.message);
     }
-});
+})();
+
+// For local development: start a real HTTP server
+if (process.env.NODE_ENV !== 'production') {
+    app.listen(PORT, () => {
+        console.log(`[Server] Running on http://localhost:${PORT}`);
+    });
+}
+
+module.exports = app;
