@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
-const mysql = require('mysql2/promise');
 const pool = require('./src/db');
 const authRoutes = require('./src/routes/auth');
 const marksRoutes = require('./src/routes/marks');
@@ -55,18 +54,8 @@ async function seedAdmin() {
 
 // ─── Database init and start ───────────────────────────────────────────────────
 async function initDB() {
-    // First, connect without a database to create it if needed
-    const connection = await mysql.createConnection({
-        host: process.env.DB_HOST || 'localhost',
-        port: parseInt(process.env.DB_PORT) || 3306,
-        user: process.env.DB_USER || 'root',
-        password: process.env.DB_PASSWORD || '',
-    });
-
-    await connection.query(`CREATE DATABASE IF NOT EXISTS \`${process.env.DB_NAME || 'marks_portal'}\``);
-    await connection.end();
-
-    // Now use the pool to create tables
+    // Create tables directly — on cloud providers (Aiven, PlanetScale, etc.)
+    // the database already exists; CREATE DATABASE would fail with no privileges.
     await pool.execute(`
     CREATE TABLE IF NOT EXISTS students (
       id INT AUTO_INCREMENT PRIMARY KEY,
