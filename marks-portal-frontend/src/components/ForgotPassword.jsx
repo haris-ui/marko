@@ -5,6 +5,7 @@ import { forgotPassword } from '../services/api';
 
 export default function ForgotPassword() {
     const [rollNumber, setRollNumber] = useState('');
+    const [email, setEmail] = useState('');
     const [loading, setLoading] = useState(false);
     const [done, setDone] = useState(false);
 
@@ -12,7 +13,7 @@ export default function ForgotPassword() {
         e.preventDefault();
         setLoading(true);
         try {
-            const { data } = await forgotPassword(rollNumber);
+            const { data } = await forgotPassword(rollNumber, email);
             toast.success(data.message || 'New credentials sent!');
             setDone(true);
         } catch (err) {
@@ -51,7 +52,7 @@ export default function ForgotPassword() {
             <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-2xl">
                 <div className="text-center mb-8">
                     <h1 className="text-3xl font-bold text-white tracking-tight">Forgot Password?</h1>
-                    <p className="text-slate-400 mt-2">Enter your roll number to receive new credentials.</p>
+                    <p className="text-slate-400 mt-2">Enter your Roll Number and Email to receive a new password.</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-6">
@@ -66,10 +67,21 @@ export default function ForgotPassword() {
                             placeholder="e.g. STU12345"
                         />
                     </div>
+                    <div>
+                        <label className="block text-sm font-medium text-slate-300 mb-2">Registered Email</label>
+                        <input
+                            type="email"
+                            required
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all placeholder-slate-500"
+                            placeholder="e.g. yourname@example.com"
+                        />
+                    </div>
 
                     <button
                         type="submit"
-                        disabled={loading}
+                        disabled={loading || !rollNumber.trim() || !email.trim()}
                         className="w-full py-4 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold rounded-xl transition-all shadow-lg shadow-indigo-500/20 active:scale-95 flex items-center justify-center"
                     >
                         {loading ? (

@@ -6,6 +6,8 @@ const { body, validationResult } = require('express-validator');
 const pool = require('../db');
 const { verifyToken, requireAdmin } = require('../middleware/auth');
 
+const { sendCredentialsEmail } = require('../emailService');
+
 /**
  * Generate a random alphanumeric password of given length.
  */
@@ -114,6 +116,14 @@ router.post(
                 [roll_number, password_hash, name, email || null, 'student']
             );
 
+            if (email) {
+                try {
+                    await sendCredentialsEmail(email, name, roll_number, plainPassword);
+                } catch (err) {
+                    console.error('[Email] Failed to send to', email, err.message);
+                }
+            }
+
             res.status(201).json({
                 message: 'Student registered successfully.',
                 credentials: { roll_number, password: plainPassword, name },
@@ -164,6 +174,15 @@ router.post(
                     'INSERT INTO students (roll_number, password_hash, name, email, role) VALUES (?, ?, ?, ?, ?)',
                     [roll_number.trim(), password_hash, name.trim(), email?.trim() || null, 'student']
                 );
+
+                if (email?.trim()) {
+                    try {
+                        await sendCredentialsEmail(email.trim(), name.trim(), roll_number.trim(), plainPassword);
+                    } catch (err) {
+                        console.error('[Bulk Email] Error for ' + email, err.message);
+                    }
+                }
+
                 results.push({ roll_number: roll_number.trim(), name: name.trim(), password: plainPassword });
             } catch (err) {
                 errors.push({ roll_number, error: err.message });
@@ -180,42 +199,57 @@ router.post(
 
 /**
  * POST /api/auth/forgot-password
- * Admin only — resets a student's password and returns the new one.
- * Body: { roll_number }
- * NOTE: No email service needed — admin gives credentials to student directly.
+ * Public — resets a student's password and emails the new one.
+ * Body: { roll_number, email }
  */
 router.post(
     '/forgot-password',
-    verifyToken,
-    requireAdmin,
-    [body('roll_number').trim().notEmpty().withMessage('Roll number is required.')],
+    [
+        body('roll_number').trim().notEmpty().withMessage('Roll number is required.'),
+        body('email').trim().isEmail().withMessage('Valid email is required.')
+    ],
     async (req, res, next) => {
         const errors = validationResult(req);
         if (!errors.isEmpty()) {
             return res.status(400).json({ message: errors.array()[0].msg });
         }
 
-        const { roll_number } = req.body;
+        const { roll_number, email } = req.body;
 
         try {
             const [rows] = await pool.execute(
-                'SELECT id, name FROM students WHERE roll_number = ?',
+                'SELECT id, name, email FROM students WHERE roll_number = ?',
                 [roll_number]
             );
+
             if (rows.length === 0) {
                 return res.status(404).json({ message: 'Student not found.' });
             }
 
+            const student = rows[0];
+
+            // Check if the provided email matches the database record
+            if (!student.email || student.email.toLowerCase() !== email.toLowerCase()) {
+                return res.status(401).json({ message: 'The provided email does not match the registered student email.' });
+            }
+
             const plainPassword = generatePassword(8);
             const password_hash = await bcrypt.hash(plainPassword, 12);
+
             await pool.execute(
                 'UPDATE students SET password_hash = ? WHERE id = ?',
-                [password_hash, rows[0].id]
+                [password_hash, student.id]
             );
 
+            try {
+                await sendCredentialsEmail(student.email, student.name, roll_number, plainPassword);
+            } catch (emailErr) {
+                console.error('[Email] Failed during password reset', emailErr.message);
+                return res.status(500).json({ message: 'Failed to send email. Ensure EMAIL_USER and EMAIL_PASS are set in Vercel.' });
+            }
+
             res.json({
-                message: 'Password reset successfully. Share these new credentials with the student.',
-                credentials: { roll_number, name: rows[0].name, password: plainPassword },
+                message: 'A new password has been generated and sent to your email address.',
             });
         } catch (err) {
             next(err);

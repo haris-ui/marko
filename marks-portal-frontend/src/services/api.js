@@ -29,8 +29,8 @@ api.interceptors.response.use(
 export const login = (roll_number, password) =>
     api.post('/auth/login', { roll_number, password });
 
-export const forgotPassword = (roll_number) =>
-    api.post('/auth/forgot-password', { roll_number });
+export const forgotPassword = (roll_number, email) =>
+    api.post('/auth/forgot-password', { roll_number, email });
 
 export const registerStudent = (data) => api.post('/auth/register', data);
 
